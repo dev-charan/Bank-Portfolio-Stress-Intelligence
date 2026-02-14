@@ -1,0 +1,241 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== MASTER TABLES ====================
+
+model Bank {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches Branch[]
+  records  Record[]
+  metrics  BankMetrics[]
+  alerts   Alert[]
+
+  @@index([name])
+  @@map("banks")
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  state     String
+  bankId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bank    Bank     @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  records Record[]
+
+  @@unique([bankId, name, state])
+  @@index([bankId])
+  @@index([state])
+  @@map("branches")
+}
+
+model Borrower {
+  id        String   @id @default(cuid())
+  name      String
+  pan       String?
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  records    Record[]
+  directors  Director[]
+  guarantors Guarantor[]
+
+  @@index([name])
+  @@index([pan])
+  @@map("borrowers")
+}
+
+model Director {
+  id         String   @id @default(cuid())
+  name       String
+  din        String?
+  pan        String?
+  borrowerId String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  borrower Borrower @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
+
+  @@unique([borrowerId, name])
+  @@index([borrowerId])
+  @@index([din])
+  @@map("directors")
+}
+
+model Guarantor {
+  id         String   @id @default(cuid())
+  name       String
+  cin        String?
+  pan        String?
+  borrowerId String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  borrower Borrower @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
+
+  @@unique([borrowerId, name])
+  @@index([borrowerId])
+  @@index([cin])
+  @@map("guarantors")
+}
+
+// ==================== FACT TABLE ====================
+
+model Record {
+  id                      String    @id @default(cuid())
+  reportingCycle          String
+  
+  bankId                  String
+  branchId                String
+  borrowerId              String
+  
+  outstandingAmount       Decimal   @db.Decimal(20, 2)
+  suitFiled               Boolean   @default(false)
+  assetClassification     String?
+  assetClassificationDate DateTime?
+  otherBanks              String?
+  
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  bank     Bank     @relation(fields: [bankId], references: [id])
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  borrower Borrower @relation(fields: [borrowerId], references: [id])
+
+  @@unique([reportingCycle, bankId, borrowerId])
+  @@index([reportingCycle])
+  @@index([bankId])
+  @@index([borrowerId])
+  @@index([suitFiled])
+  @@index([assetClassification])
+  @@map("records")
+}
+
+model ReportingCycle {
+  id           String   @id @default(cuid())
+  cycleName    String   @unique
+  fileName     String
+  recordCount  Int
+  uploadDate   DateTime @default(now())
+  status       String   @default("completed")
+  errorMessage String?
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([cycleName])
+  @@map("reporting_cycles")
+}
+
+// ==================== ANALYTICS TABLES ====================
+
+model BankMetrics {
+  id        String   @id @default(cuid())
+  bankId    String
+  bank      Bank     @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  
+  // Period
+  reportingCycle String
+  
+  // Aggregated Financial Data
+  totalExposure        Decimal @db.Decimal(20, 2)
+  totalRecords         Int     @default(0) // ✅ ADDED: Number of records
+  totalBorrowers       Int     @default(0) // ✅ CHANGED: Added default
+  totalBranches        Int     @default(0) // ✅ CHANGED: Added default (branch count for this bank)
+  
+  // Risk Indicators
+  compositeScore       Float   @default(0) // ✅ CHANGED: Added default
+  riskCategory         String  @default("LOW") // ✅ CHANGED: Added default
+  
+  // Growth Metrics
+  exposureGrowth       Float   @default(0)
+  borrowerGrowth       Float   @default(0)
+  
+  // Asset Quality
+  escalationRate       Float   @default(0)
+  persistenceRate      Float   @default(0)
+  
+  // Legal Actions
+  suitFiledCount       Int     @default(0)
+  suitFiledPercentage  Float   @default(0)
+  
+  // Geographic Concentration
+  geoConcentration     Float   @default(0)
+  topState             String?
+  stateDistribution    Json?
+  
+  // NPA Distribution
+  npaDistribution      Json?
+  
+  // Metadata
+  calculatedAt         DateTime @default(now())
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([bankId, reportingCycle])
+  @@index([bankId])
+  @@index([reportingCycle])
+  @@index([riskCategory])
+  @@index([compositeScore])
+  @@map("bank_metrics")
+}
+
+model Alert {
+  id          String   @id @default(cuid())
+  bankId      String
+  bank        Bank     @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  
+  type        String   // RISK_ESCALATION, EXPOSURE_SPIKE, etc.
+  severity    String   // CRITICAL, HIGH, MEDIUM, LOW
+  title       String
+  description String
+  
+  metric      String?
+  threshold   Float?
+  actualValue Float?
+  
+  reportingCycle String
+  
+  status      String   @default("ACTIVE") // ACTIVE, ACKNOWLEDGED, RESOLVED
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  resolvedAt     DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([bankId])
+  @@index([status])
+  @@index([severity])
+  @@index([reportingCycle])
+  @@map("alerts")
+}
+
+// ==================== USER MANAGEMENT ====================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("ANALYST") // ADMIN, ANALYST, VIEWER
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
